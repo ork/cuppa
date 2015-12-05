@@ -7,26 +7,48 @@ static gboolean o_system_idle    = FALSE;
 static gboolean o_disk_idle      = FALSE;
 static gboolean o_power_sleep    = FALSE;
 static gboolean o_user_active    = FALSE;
-static gint     o_timeout        = -1;
+static guint64  o_timeout        = 0;
 static gint     o_waitpid        = -1;
 static gchar**  o_remaining      = NULL;
 
+gboolean
+parse_timeout_cb(__attribute__((unused)) const gchar *option_name,
+                 const gchar *value,
+                 __attribute__((unused)) gpointer data,
+                 GError **error)
+{
+  if (value == NULL) {
+    o_timeout = 5;
+  } else {
+    o_timeout = g_ascii_strtoull(value, NULL, 0);
+    if (o_timeout == 0) {
+      g_set_error(error, G_OPTION_ERROR, 1,
+        "'%s' is not a valid duration.", value);
+    } else if (o_timeout == G_MAXUINT64) {
+      g_set_error(error, G_OPTION_ERROR, 2,
+        "%s seconds is a gigantic duration.", value);
+    }
+  }
+
+  return (*error == NULL);
+}
+
 static GOptionEntry entries[] = {
-  { "display-sleep", 'd', 0, G_OPTION_ARG_NONE, &o_display_sleep,
+  { "display-sleep", 'd', G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE, &o_display_sleep,
     "Prevent the display from sleeping.", NULL },
-  { "system-idle", 'i', 0, G_OPTION_ARG_NONE, &o_system_idle,
+  { "system-idle", 'i', G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE, &o_system_idle,
     "Prevent the system from idle sleeping.", NULL },
-  { "disk-idle", 'm', 0, G_OPTION_ARG_NONE, &o_disk_idle,
+  { "disk-idle", 'm', G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE, &o_disk_idle,
     "Prevent the disk from idle sleeping.", NULL },
-  { "power-sleep", 's', 0, G_OPTION_ARG_NONE, &o_power_sleep,
+  { "power-sleep", 's', G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE, &o_power_sleep,
     "Prevent the system from sleeping if on AC power.", NULL },
-  { "user-active", 'u', 0, G_OPTION_ARG_NONE, &o_user_active,
+  { "user-active", 'u', G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE, &o_user_active,
     "Declare that user is active.", NULL },
-  { "timeout", 't', 0, G_OPTION_ARG_INT, &o_timeout,
-    "Duration in seconds of the override.", "T" },
-  { "waitpid", 'w', 0, G_OPTION_ARG_INT, &o_waitpid,
+  { "timeout", 't', G_OPTION_FLAG_OPTIONAL_ARG, G_OPTION_ARG_CALLBACK, parse_timeout_cb,
+    "Duration in seconds of the override, or 5 seconds if used as a flag.", "T" },
+  { "waitpid", 'w', G_OPTION_FLAG_NONE, G_OPTION_ARG_INT, &o_waitpid,
     "Wait for process completion.", "PID" },
-  { G_OPTION_REMAINING, 0, 0, G_OPTION_ARG_STRING_ARRAY,
+  { G_OPTION_REMAINING, G_OPTION_FLAG_NONE, 0, G_OPTION_ARG_STRING_ARRAY,
     &o_remaining, "Command", "-- COMMAND [ARGS...]" },
   { NULL }
 };
@@ -57,12 +79,8 @@ main(int argc, char* argv[])
 
   main_loop = g_main_loop_new(NULL, FALSE);
 
-  if (o_timeout < 0) {
-      g_printerr("Only positive values are allowed for the timeout\n");
-      pexit = 1;
-      goto err_cleanup;
-  } else {
-      g_timeout_add_seconds(o_timeout, remove_restrictions_cb, NULL);
+  if (o_timeout != 0) {
+    g_timeout_add_seconds(o_timeout, remove_restrictions_cb, NULL);
   }
 
   if (o_remaining != NULL) {
