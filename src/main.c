@@ -1,4 +1,5 @@
 #include <glib.h>
+#include <gio/gio.h>
 
 #define GETTEXT_PACKAGE "cuppa"
 
@@ -12,7 +13,7 @@ static gint     o_waitpid        = -1;
 static gchar**  o_remaining      = NULL;
 
 gboolean
-parse_timeout_cb(__attribute__((unused)) const gchar *option_name,
+parse_timeout_cb(const gchar *option_name,
                  const gchar *value,
                  __attribute__((unused)) gpointer data,
                  GError **error)
@@ -23,10 +24,10 @@ parse_timeout_cb(__attribute__((unused)) const gchar *option_name,
     o_timeout = g_ascii_strtoull(value, NULL, 0);
     if (o_timeout == 0) {
       g_set_error(error, G_OPTION_ERROR, 1,
-        "'%s' is not a valid duration.", value);
+        "'%s' is not a valid duration for %s.", value, option_name);
     } else if (o_timeout == G_MAXUINT64) {
       g_set_error(error, G_OPTION_ERROR, 2,
-        "%s seconds is a gigantic duration.", value);
+        "%s seconds is a gigantic duration for %s.", value, option_name);
     }
   }
 
@@ -59,17 +60,31 @@ gboolean remove_restrictions_cb(__attribute__((unused)) gpointer user_data)
   return G_SOURCE_REMOVE;
 }
 
+gboolean
+display_sleep_toggle(__attribute__((unused)) GMainLoop *ml,
+                     __attribute__((unused)) gboolean t)
+{
+  return TRUE;
+}
+
 int
 main(int argc, char* argv[])
 {
   GMainLoop *main_loop = NULL;
+  GDBusProxy *gd_proxy = NULL;
   GError        *error = NULL;
   gint           pexit = 0;
 
   GOptionContext * context = g_option_context_new(
     "- prevent the system from sleeping");
   g_option_context_add_main_entries(context, entries, GETTEXT_PACKAGE);
-  g_option_context_set_description(context, "This program relies heavily on D-Bus interfaces.");
+  g_option_context_set_description(context,
+    "This program relies heavily on D-Bus interfaces.");
+
+  gd_proxy = g_dbus_proxy_new_for_bus_sync(G_BUS_TYPE_SESSION,
+    G_DBUS_PROXY_FLAGS_NONE, NULL, "org.freedesktop.ScreenSaver",
+    "/org/freedesktop/ScreenSaver", "org.freedesktop.ScreenSaver",
+    NULL, &error);
 
   if (!g_option_context_parse(context, &argc, &argv, &error)) {
     g_printerr("Option parsing failed: %s\n", error->message);
@@ -99,6 +114,9 @@ main(int argc, char* argv[])
 err_cleanup:
   if (main_loop != NULL) {
     g_main_loop_unref(main_loop);
+  }
+  if (gd_proxy != NULL) {
+    g_object_unref(gd_proxy);
   }
   g_strfreev(o_remaining);
   g_clear_error(&error);

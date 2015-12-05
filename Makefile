@@ -2,8 +2,8 @@ EXEC     = cuppa
 CC       = gcc -fdiagnostics-color=always
 
 CFLAGS   = -std=c99 -O3 -Wall -Wextra -Wpedantic -Wstrict-aliasing
-CFLAGS  += $(shell pkg-config --cflags glib-2.0 dbus-glib-1)
-LDFLAGS  = $(shell pkg-config --libs   glib-2.0 dbus-glib-1)
+CFLAGS  += $(shell pkg-config --cflags glib-2.0 gio-2.0)
+LDFLAGS  = $(shell pkg-config --libs   glib-2.0 gio-2.0)
 
 SRC      = $(wildcard src/*.c)
 OBJ      = $(SRC:.c=.o)
