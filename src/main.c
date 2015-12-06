@@ -11,6 +11,12 @@ struct _Cuppa {
 
 #define GETTEXT_PACKAGE "cuppa"
 
+gboolean
+display_sleep_toggle(GDBusProxy *proxy,
+                     gboolean toggle);
+
+gboolean remove_restrictions_cb(gpointer user_data);
+
 static gboolean o_display_sleep  = FALSE;
 static gboolean o_system_idle    = FALSE;
 static gboolean o_disk_idle      = FALSE;
@@ -23,9 +29,11 @@ static gchar**  o_remaining      = NULL;
 gboolean
 parse_timeout_cb(const gchar *option_name,
                  const gchar *value,
-                 __attribute__((unused)) gpointer data,
+                 gpointer data,
                  GError **error)
 {
+  Cuppa *cuppa = data;
+
   if (value == NULL) {
     o_timeout = 5;
   } else {
@@ -38,6 +46,8 @@ parse_timeout_cb(const gchar *option_name,
         "%s seconds is a gigantic duration for %s.", value, option_name);
     }
   }
+
+  g_timeout_add_seconds(o_timeout, remove_restrictions_cb, data);
 
   return (*error == NULL);
 }
@@ -62,17 +72,57 @@ static GOptionEntry entries[] = {
   { NULL }
 };
 
-gboolean remove_restrictions_cb(__attribute__((unused)) gpointer user_data)
+gboolean remove_restrictions_cb(gpointer user_data)
 {
+  Cuppa *cuppa = user_data;
+
   g_print("Remove restrictions now!\n");
+  display_sleep_toggle(cuppa->gd_proxy, FALSE);
   return G_SOURCE_REMOVE;
 }
 
 gboolean
-display_sleep_toggle(__attribute__((unused)) GMainLoop *ml,
-                     __attribute__((unused)) gboolean t)
+display_sleep_toggle(GDBusProxy *proxy,
+                     gboolean toggle)
 {
-  return TRUE;
+  static guint32 cookie = 0;
+  GVariant *out = NULL;
+  GError *error = NULL;
+
+  if (toggle) {
+
+    if (cookie == 0) {
+      out = g_dbus_proxy_call_sync(proxy, "Inhibit",
+        g_variant_new("(ss)", g_get_application_name(), "Keep display on"),
+        G_DBUS_CALL_FLAGS_NONE, -1, NULL, &error);
+
+      if (error != NULL) {
+        g_printerr("%s\n", error->message);
+      }
+
+      g_variant_get_child(out, 0, "u", &cookie);
+
+      g_print("Received screen inhibit cookie: %u\n", cookie);
+    }
+
+  } else {
+
+    if (cookie != 0) {
+      out = g_dbus_proxy_call_sync(proxy, "UnInhibit",
+        g_variant_new("(u)", cookie), G_DBUS_CALL_FLAGS_NONE, -1, NULL, &error);
+
+      if (error != NULL) {
+        g_printerr("%s\n", error->message);
+      }
+
+      g_print("Destroyed screen inhibit cookie\n");
+    }
+
+  }
+
+  g_variant_unref(out);
+
+  return error == NULL;
 }
 
 int
@@ -88,14 +138,12 @@ main(int argc, char* argv[])
   gint           pexit = 0;
 
   cuppa.ctx = g_option_context_new("- prevent the system from sleeping");
-  g_option_context_add_main_entries(cuppa.ctx, entries, GETTEXT_PACKAGE);
+  g_option_context_set_translation_domain(cuppa.ctx, GETTEXT_PACKAGE);
+  GOptionGroup *group = g_option_group_new(NULL, NULL, NULL, &cuppa, NULL);
+  g_option_group_add_entries(group, entries);
+  g_option_context_set_main_group(cuppa.ctx, group);
   g_option_context_set_description(cuppa.ctx,
     "This program relies heavily on D-Bus interfaces.");
-
-  gd_proxy = g_dbus_proxy_new_for_bus_sync(G_BUS_TYPE_SESSION,
-    G_DBUS_PROXY_FLAGS_NONE, NULL, "org.freedesktop.ScreenSaver",
-    "/org/freedesktop/ScreenSaver", "org.freedesktop.ScreenSaver",
-    NULL, &error);
 
   if (!g_option_context_parse(cuppa.ctx, &argc, &argv, &error)) {
     g_printerr("Option parsing failed: %s\n", error->message);
@@ -108,9 +156,6 @@ main(int argc, char* argv[])
     "/org/freedesktop/ScreenSaver", "org.freedesktop.ScreenSaver",
     NULL, &error);
 
-  if (o_timeout != 0) {
-    g_timeout_add_seconds(o_timeout, remove_restrictions_cb, NULL);
-  }
   display_sleep_toggle(cuppa.gd_proxy, TRUE);
 
   if (o_remaining != NULL) {
