@@ -1,6 +1,14 @@
 #include <glib.h>
 #include <gio/gio.h>
 
+typedef struct _Cuppa Cuppa;
+
+struct _Cuppa {
+  GMainLoop *main_loop;
+  GDBusProxy *gd_proxy;
+  GOptionContext  *ctx;
+};
+
 #define GETTEXT_PACKAGE "cuppa"
 
 static gboolean o_display_sleep  = FALSE;
@@ -70,15 +78,18 @@ display_sleep_toggle(__attribute__((unused)) GMainLoop *ml,
 int
 main(int argc, char* argv[])
 {
-  GMainLoop *main_loop = NULL;
-  GDBusProxy *gd_proxy = NULL;
+  Cuppa cuppa = {
+    .main_loop = g_main_loop_new(NULL, FALSE),
+    .gd_proxy  = NULL,
+    .ctx       = NULL,
+  };
+
   GError        *error = NULL;
   gint           pexit = 0;
 
-  GOptionContext * context = g_option_context_new(
-    "- prevent the system from sleeping");
-  g_option_context_add_main_entries(context, entries, GETTEXT_PACKAGE);
-  g_option_context_set_description(context,
+  cuppa.ctx = g_option_context_new("- prevent the system from sleeping");
+  g_option_context_add_main_entries(cuppa.ctx, entries, GETTEXT_PACKAGE);
+  g_option_context_set_description(cuppa.ctx,
     "This program relies heavily on D-Bus interfaces.");
 
   gd_proxy = g_dbus_proxy_new_for_bus_sync(G_BUS_TYPE_SESSION,
@@ -86,17 +97,21 @@ main(int argc, char* argv[])
     "/org/freedesktop/ScreenSaver", "org.freedesktop.ScreenSaver",
     NULL, &error);
 
-  if (!g_option_context_parse(context, &argc, &argv, &error)) {
+  if (!g_option_context_parse(cuppa.ctx, &argc, &argv, &error)) {
     g_printerr("Option parsing failed: %s\n", error->message);
     pexit = 1;
     goto err_cleanup;
   }
 
-  main_loop = g_main_loop_new(NULL, FALSE);
+  cuppa.gd_proxy = g_dbus_proxy_new_for_bus_sync(G_BUS_TYPE_SESSION,
+    G_DBUS_PROXY_FLAGS_NONE, NULL, "org.freedesktop.ScreenSaver",
+    "/org/freedesktop/ScreenSaver", "org.freedesktop.ScreenSaver",
+    NULL, &error);
 
   if (o_timeout != 0) {
     g_timeout_add_seconds(o_timeout, remove_restrictions_cb, NULL);
   }
+  display_sleep_toggle(cuppa.gd_proxy, TRUE);
 
   if (o_remaining != NULL) {
     if (!g_spawn_sync(NULL, o_remaining, NULL,
@@ -107,16 +122,16 @@ main(int argc, char* argv[])
       goto err_cleanup;
     }
   } else {
-    g_main_loop_run(main_loop);
+    g_main_loop_run(cuppa.main_loop);
   }
 
 
 err_cleanup:
-  if (main_loop != NULL) {
-    g_main_loop_unref(main_loop);
+  if (cuppa.main_loop != NULL) {
+    g_main_loop_unref(cuppa.main_loop);
   }
-  if (gd_proxy != NULL) {
-    g_object_unref(gd_proxy);
+  if (cuppa.gd_proxy != NULL) {
+    g_object_unref(cuppa.gd_proxy);
   }
   g_strfreev(o_remaining);
   g_clear_error(&error);
