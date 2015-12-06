@@ -5,14 +5,14 @@ typedef struct _Cuppa Cuppa;
 
 struct _Cuppa {
   GMainLoop *main_loop;
-  GDBusProxy *gd_proxy;
+  GDBusProxy *d_proxy;
   GOptionContext  *ctx;
 };
 
 #define GETTEXT_PACKAGE "cuppa"
 
 gboolean
-display_sleep_toggle(GDBusProxy *proxy,
+display_sleep_toggle(Cuppa *cuppa,
                      gboolean toggle);
 
 gboolean remove_restrictions_cb(gpointer user_data);
@@ -77,12 +77,12 @@ gboolean remove_restrictions_cb(gpointer user_data)
   Cuppa *cuppa = user_data;
 
   g_print("Remove restrictions now!\n");
-  display_sleep_toggle(cuppa->gd_proxy, FALSE);
+  display_sleep_toggle(cuppa, FALSE);
   return G_SOURCE_REMOVE;
 }
 
 gboolean
-display_sleep_toggle(GDBusProxy *proxy,
+display_sleep_toggle(Cuppa *cuppa,
                      gboolean toggle)
 {
   static guint32 cookie = 0;
@@ -91,8 +91,17 @@ display_sleep_toggle(GDBusProxy *proxy,
 
   if (toggle) {
 
+    cuppa->d_proxy = g_dbus_proxy_new_for_bus_sync(G_BUS_TYPE_SESSION,
+      G_DBUS_PROXY_FLAGS_NONE, NULL, "org.freedesktop.ScreenSaver",
+      "/org/freedesktop/ScreenSaver", "org.freedesktop.ScreenSaver",
+      NULL, &error);
+
+      if (error != NULL) {
+        g_printerr("%s\n", error->message);
+      }
+
     if (cookie == 0) {
-      out = g_dbus_proxy_call_sync(proxy, "Inhibit",
+      out = g_dbus_proxy_call_sync(cuppa->d_proxy, "Inhibit",
         g_variant_new("(ss)", g_get_application_name(), "Keep display on"),
         G_DBUS_CALL_FLAGS_NONE, -1, NULL, &error);
 
@@ -108,7 +117,7 @@ display_sleep_toggle(GDBusProxy *proxy,
   } else {
 
     if (cookie != 0) {
-      out = g_dbus_proxy_call_sync(proxy, "UnInhibit",
+      out = g_dbus_proxy_call_sync(cuppa->d_proxy, "UnInhibit",
         g_variant_new("(u)", cookie), G_DBUS_CALL_FLAGS_NONE, -1, NULL, &error);
 
       if (error != NULL) {
@@ -120,7 +129,9 @@ display_sleep_toggle(GDBusProxy *proxy,
 
   }
 
-  g_variant_unref(out);
+  if (out != NULL) {
+    g_variant_unref(out);
+  }
 
   return error == NULL;
 }
@@ -130,7 +141,7 @@ main(int argc, char* argv[])
 {
   Cuppa cuppa = {
     .main_loop = g_main_loop_new(NULL, FALSE),
-    .gd_proxy  = NULL,
+    .d_proxy  = NULL,
     .ctx       = NULL,
   };
 
@@ -151,12 +162,9 @@ main(int argc, char* argv[])
     goto err_cleanup;
   }
 
-  cuppa.gd_proxy = g_dbus_proxy_new_for_bus_sync(G_BUS_TYPE_SESSION,
-    G_DBUS_PROXY_FLAGS_NONE, NULL, "org.freedesktop.ScreenSaver",
-    "/org/freedesktop/ScreenSaver", "org.freedesktop.ScreenSaver",
-    NULL, &error);
-
-  display_sleep_toggle(cuppa.gd_proxy, TRUE);
+  if (o_display_sleep) {
+    display_sleep_toggle(&cuppa, TRUE);
+  }
 
   if (o_remaining != NULL) {
     if (!g_spawn_sync(NULL, o_remaining, NULL,
@@ -172,11 +180,12 @@ main(int argc, char* argv[])
 
 
 err_cleanup:
+  remove_restrictions_cb(&cuppa);
   if (cuppa.main_loop != NULL) {
     g_main_loop_unref(cuppa.main_loop);
   }
-  if (cuppa.gd_proxy != NULL) {
-    g_object_unref(cuppa.gd_proxy);
+  if (cuppa.d_proxy != NULL) {
+    g_object_unref(cuppa.d_proxy);
   }
   g_strfreev(o_remaining);
   g_clear_error(&error);
